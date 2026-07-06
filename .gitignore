@@ -1,0 +1,7 @@
+dist/
+.winget/
+*.exe
+local-test-env/
+contexts.json
+.idea/
+.vscode/
