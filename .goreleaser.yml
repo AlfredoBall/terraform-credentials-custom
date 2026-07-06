@@ -1,0 +1,39 @@
+version: 2
+
+project_name: terraform-credentials-custom
+
+builds:
+  - id: tfcred
+    main: ./cmd/terraform-credentials-custom/tfcred
+    binary: tfcred
+    goos:
+      - windows
+    goarch:
+      - amd64
+
+  - id: terraform-credentials-custom
+    main: ./cmd/terraform-credentials-custom
+    binary: terraform-credentials-custom
+    goos:
+      - windows
+    goarch:
+      - amd64
+
+archives:
+  - id: default
+
+    formats: 
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README*
+      - LICENSE*
+      - contexts.json
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: AlfredoBall
+    name: terraform-credentials-custom

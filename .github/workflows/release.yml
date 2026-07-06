@@ -1,0 +1,93 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26
+
+      - name: Run unit tests
+        run: go test ./... -v
+
+  build_release:
+    name: build + goreleaser
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          # Strip 'v' prefix for WinGet specification requirements
+          RAW_VERSION="${GITHUB_REF_NAME}"
+          CLEAN_VERSION="${RAW_VERSION#v}"
+          echo "version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${RAW_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: GoReleaser (build artifacts)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------
+      # Real CLI Local E2E Validation Engine Check
+      # -------------------------------------------------------
+      - name: E2E Terraform Cloud validation
+        run: |
+          echo "[e2e] Validating built distribution engine components safely..."
+          mkdir -p /tmp/tfcred-test
+          cd /tmp/tfcred-test
+          go run ../../cmd/terraform-credentials-custom/tfcred init
+          if [ ! -f contexts.json ]; then
+            echo "Failed to verify configuration context generation."
+            exit 1
+          fi
+          echo "[e2e] Success."
+
+
+      # -------------------------------------------------------
+      # Trigger winget pipeline dispatch loop
+      # -------------------------------------------------------
+      - name: Trigger winget workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "winget.yml",
+              ref: "main",
+              inputs: {
+                version: "${{ steps.meta.outputs.version }}",
+                tag: "${{ steps.meta.outputs.tag }}"
+              }
+            });

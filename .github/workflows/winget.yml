@@ -1,0 +1,137 @@
+name: winget
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  create_pr:
+    name: create winget PR
+    runs-on: ubuntu-latest
+    steps:
+      # -------------------------------------------------------
+      # 1. Resolve the GoReleaser Archive from Releases
+      # -------------------------------------------------------
+      - name: Resolve release assets
+        id: assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = "${{ inputs.tag }}";
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag
+            });
+            
+            const assets = release.data.assets;
+            const match = assets.find(a => 
+              a.name.toLowerCase().includes("windows") && 
+              a.name.toLowerCase().includes("amd64") && 
+              a.name.endsWith(".zip")
+            );
+            
+            if (!match) {
+              throw new Error("Target Windows AMD64 .zip archive not found in release assets.");
+            }
+            
+            core.setOutput("installer_url", match.browser_download_url);
+            core.setOutput("asset_name", match.name);
+
+      # -------------------------------------------------------
+      # 2. Download Archive + Compute Dynamic SHA256 Hash
+      # -------------------------------------------------------
+      - name: Download release asset and hash
+        id: crypto
+        run: |
+          curl -L "${{ steps.assets.outputs.installer_url }}" -o artifact.zip
+          SHA=$(sha256sum artifact.zip | awk '{print $1}')
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      # -------------------------------------------------------
+      # 3. Create Upstream PR Using Your Existing Fork & PAT
+      # -------------------------------------------------------
+      - name: Submit manifests directly via GitHub API
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.WINGET_PAT }}
+          script: |
+            const fs = require('fs');
+            const version = "${{ inputs.version }}";
+            const url = "${{ steps.assets.outputs.installer_url }}";
+            const sha = "${{ steps.crypto.outputs.sha }}";
+            const branchName = `winget-update-tfcred-${version}`;
+            
+            // Define manifest contents matching strict WinGet rules
+            const file1Content = `PackageIdentifier: AlfredoBall.tfcred\nPackageVersion: ${version}\nManifestType: version\nManifestVersion: 1.6.0`;
+            
+            const file2Content = `PackageIdentifier: AlfredoBall.tfcred\nPackageVersion: ${version}\nInstallerLocale: en-US\nArchitecture: x64\nInstallerType: zip\nNestedInstallerType: portable\nNestedInstallerFiles:\n  - RelativeFilePath: tfcred.exe\n    PortableCommandAlias: tfcred\n  - RelativeFilePath: terraform-credentials-custom.exe\n    PortableCommandAlias: terraform-credentials-custom\nInstallers:\n  - Architecture: x64\n    InstallerUrl: ${url}\n    InstallerSha256: ${sha}\nManifestType: installer\nManifestVersion: 1.6.0`;
+            
+            const file3Content = `PackageIdentifier: AlfredoBall.tfcred\nPackageVersion: ${version}\nPackageLocale: en-US\nPublisher: AlfredoBall\nPackageName: tfcred\nLicense: MIT\nShortDescription: Terraform credential context manager\nManifestType: defaultLocale\nManifestVersion: 1.6.0`;
+
+            const manifestPath = `manifests/a/AlfredoBall/tfcred/${version}`;
+            
+            console.log(`[winget] Creating branch ${branchName} inside AlfredoBall/winget-pkgs...`);
+            
+            // 1. Get the latest SHA from master branch of your fork
+            const masterRef = await github.rest.git.getRef({
+              owner: 'AlfredoBall',
+              repo: 'winget-pkgs',
+              ref: 'heads/master'
+            });
+            
+            // 2. Create your new tracking feature branch
+            await github.rest.git.createRef({
+              owner: 'AlfredoBall',
+              repo: 'winget-pkgs',
+              ref: `refs/heads/${branchName}`,
+              sha: masterRef.data.object.sha
+            });
+            
+            // Helper function to create individual file commits inside your branch via API
+            async function commitFile(path, content, message) {
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: 'AlfredoBall',
+                repo: 'winget-pkgs',
+                path: path,
+                message: message,
+                content: Buffer.from(content).toString('base64'),
+                branch: branchName
+              });
+            }
+
+            console.log(`[winget] Writing manifest files to branch...`);
+            await commitFile(`${manifestPath}/AlfredoBall.tfcred.yaml`, file1Content, `feat: add version manifest for ${version}`);
+            await commitFile(`${manifestPath}/AlfredoBall.tfcred.installer.yaml`, file2Content, `feat: add installer manifest for ${version}`);
+            await commitFile(`${manifestPath}/AlfredoBall.tfcred.locale.en-US.yaml`, file3Content, `feat: add locale manifest for ${version}`);
+
+            console.log(`[winget] Opening Pull Request against microsoft/winget-pkgs...`);
+            const pr = await github.rest.pulls.create({
+              owner: 'microsoft',
+              repo: 'winget-pkgs',
+              title: `New version: AlfredoBall.tfcred version ${version}`,
+              body: `Automated WinGet submission update for AlfredoBall.tfcred version ${version}.`,
+              head: `AlfredoBall:${branchName}`,
+              base: 'master'
+            });
+
+            console.log(`[winget] Success! PR Opened: ${pr.data.html_url}`);
+            core.setOutput("pr_url", pr.data.html_url);
+
+      # -------------------------------------------------------
+      # 4. Step Summary Output Dashboard
+      # -------------------------------------------------------
+      - name: Summary
+        run: |
+          echo "## Winget PR Created Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- Version Sent: v${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
