@@ -1,6 +1,6 @@
 # tfcred — Terraform credential context manager
 
-`tfcred` is a lightweight helper for switching Terraform Cloud and Terraform Enterprise credentials by context. It is designed for workflows where you want to keep multiple organization- or team-scoped tokens available and select them explicitly through `TF_CONTEXT` instead of relying on a single global token.
+`tfcred` is a lightweight helper for switching Terraform Cloud and Terraform Enterprise credentials by context. It is designed for workflows where you want to keep multiple organization or team-scoped tokens available and select them explicitly through `TF_CONTEXT` instead of relying on a single global token.
 
 ## What this tool does
 
