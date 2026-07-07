@@ -156,8 +156,8 @@ func main() {
 		}
 
 		fmt.Printf("%s[tfcred]%s successfully removed context '%s' from metadata.%s\n", colorGreen, colorReset, ctxName, colorReset)
-		fmt.Println("[note] The associated token remains stored in Windows registry and current session.")
-		fmt.Println("       Use 'tfcred purge <context>' to also delete the token.")
+		fmt.Println("[note] The associated token remains stored in Windows registry and current session. It is no longer managed by tfcred.")
+		fmt.Println("       Use 'tfcred add <context>' with the same context name to re-associate the token with a new context.")
 
 	case "purge":
 		purgeCmd := flag.NewFlagSet("purge", flag.ExitOnError)
