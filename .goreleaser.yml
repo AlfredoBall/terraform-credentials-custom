@@ -6,6 +6,10 @@ builds:
   - id: tfcred
     main: ./cmd/terraform-credentials-custom/tfcred
     binary: tfcred
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{ .Version }}
     goos:
       - windows
     goarch:
@@ -14,6 +18,10 @@ builds:
   - id: terraform-credentials-custom
     main: ./cmd/terraform-credentials-custom
     binary: terraform-credentials-custom
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{ .Version }}
     goos:
       - windows
     goarch:

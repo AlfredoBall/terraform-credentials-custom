@@ -59,19 +59,50 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # -------------------------------------------------------
-      # Real CLI Local E2E Validation Engine Check
+      # Helper wiring validation (no live Terraform Cloud call)
       # -------------------------------------------------------
-      - name: E2E Terraform Cloud validation
+      - name: Install Terraform CLI
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.7
+
+      - name: E2E helper wiring validation
+        env:
+          TF_TEST_TOKEN: ${{ vars.TF_TEST_TOKEN }}
+          TF_CLI_CONFIG_FILE: /tmp/tfcred-test/terraform.tfrc
         run: |
-          echo "[e2e] Validating built distribution engine components safely..."
-          mkdir -p /tmp/tfcred-test
-          cd /tmp/tfcred-test
-          go run ../../cmd/terraform-credentials-custom/tfcred init
-          if [ ! -f contexts.json ]; then
-            echo "Failed to verify configuration context generation."
-            exit 1
+          set -euo pipefail
+          echo "[e2e] validating tfcred helper wiring with the compiled binary"
+
+          mkdir -p /tmp/tfcred-test/bin /tmp/tfcred-test/home
+          export PATH="/tmp/tfcred-test/bin:$PATH"
+          export HOME="/tmp/tfcred-test/home"
+          export APPDATA="/tmp/tfcred-test/home"
+
+          go build -ldflags "-X main.version=${{ steps.meta.outputs.version }}" -o /tmp/tfcred-test/bin/tfcred ./cmd/terraform-credentials-custom/tfcred
+          go build -ldflags "-X main.version=${{ steps.meta.outputs.version }}" -o /tmp/tfcred-test/bin/terraform-credentials-custom ./cmd/terraform-credentials-custom
+          chmod +x /tmp/tfcred-test/bin/tfcred /tmp/tfcred-test/bin/terraform-credentials-custom
+
+          tfcred --help >/dev/null
+          tfcred version
+          tfcred init --domain app.terraform.io
+
+          if [ -n "${TF_TEST_TOKEN:-}" ]; then
+            echo "[e2e] injecting test team token metadata into tfcred"
+            tfcred add --context ci-team-test --org ci-test-org --token-type team --domain app.terraform.io --token "$TF_TEST_TOKEN"
+          else
+            echo "[e2e] TF_TEST_TOKEN not configured; validating metadata-only registration path"
+            tfcred add --context ci-team-test --org ci-test-org --token-type team --domain app.terraform.io
           fi
-          echo "[e2e] Success."
+
+          pwsh -File ./scripts/install.ps1
+
+          test -f "$TF_CLI_CONFIG_FILE"
+          grep -q 'credentials_helper "custom"' "$TF_CLI_CONFIG_FILE"
+
+          tfcred list
+          tfcred doctor
+          terraform version
 
 
       # -------------------------------------------------------

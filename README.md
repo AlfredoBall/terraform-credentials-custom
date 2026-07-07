@@ -1,153 +1,132 @@
-# tfcred — Terraform Credential Context Manager
+# tfcred — Terraform credential context manager
 
-`tfcred` is a lightweight, zero-dependency development tool designed to manage multiple **Terraform Cloud/Enterprise authentication contexts** on a single machine. By driving a custom Terraform CLI credential helper, `tfcred` allows developers to cleanly hot-swap between multiple organizations, teams, and token scopes instantly without continuous authentications, environment juggling, or profile pollution.
+`tfcred` is a lightweight helper for switching Terraform Cloud and Terraform Enterprise credentials by context. It is designed for workflows where you want to keep multiple organization- or team-scoped tokens available and select them explicitly through `TF_CONTEXT` instead of relying on a single global token.
 
----
+## What this tool does
 
-## Why This Exists
+`tfcred` works with the Terraform credential helper flow by resolving a token from an environment variable that matches the active context. The tool does not use a fallback default token, and it does not read `credentials.tf.json`.
 
-By default, the native Terraform CLI configuration dictates a rigid, single-token mapping for `app.terraform.io`. Juggling multi-tenant environments usually requires constant terminal exports, custom script wrappers, or manual logins when switching across:
-* **Multiple Organizations** (e.g., Core Platform vs Network Engineering)
-* **Varying Privilege Tiers** (User Tokens vs Team Tokens vs Organization Tokens)
-* **Local Workspace Paradigms** (Local development states vs CI execution profiles)
+Instead, the model is:
 
-`tfcred` shifts authentication scopes into standard, isolated terminal process environment vectors seamlessly.
+- `tfcred init` sets the default Terraform domain once.
+- `tfcred add` stores a context entry for a specific scope such as `team:acme` or `user:platform`.
+- `tfcred switch <context>` sets `TF_CONTEXT` for the current shell/session.
+- Terraform then resolves the matching token from the environment variable that `tfcred` registered.
 
----
+## Core concepts
 
-## Architecture Overview
+### Default domain
+The default domain is only the Terraform hostname used for context entries when no explicit domain is provided. It is chosen during initialization and stored as configuration state.
 
-```text
-       Terraform CLI Execution Event
-                    ↓
-   Native Credentials Helper Call Interface
-                    ↓
-        Reads: \$env:TF_CONTEXT 
-                    ↓
-     tfcred Deterministic Resolution Engine
-                    ↓
-  Maps Target Token Environment Target Keys:
-  - Default: TF_TOKEN_app_terraform_io
-  - Scoped:  TF_TOKEN_app_terraform_io_<type>_<org>
-```
+Examples:
+- `app.terraform.io`
+- `app.eu.terraform.io`
 
----
+### Contexts
+A context is a named entry that maps to a token scope. The current context format is:
 
-## Key Concepts
+- `team:acme`
+- `user:platform`
+- `org:engineering`
 
-### 1. TF_CONTEXT
-A runtime environment string assigned to the active shell session specifying the current scope. Valid structures evaluate to:
-* `default`
-* `team:networking`
-* `user:platform`
-* `org:control-plane`
-
-**Taxonomy Mechanics:** `[Type]:[Organization Name]`
-
-### 2. Token Resolution Mapping
-Tokens are read strictly from environment keys matching the configuration metadata schema:
-* **Global Default:** `TF_TOKEN_app_terraform_io`
-* **Context Scoped:** `TF_TOKEN_app_terraform_io_<type>_<org>`
-* *Example Target Example:* `TF_TOKEN_app_terraform_io_team_networking`
-
----
+The context name is stored locally in `contexts.json`, while the actual token remains in the environment and registry-backed variable storage.
 
 ## Installation
 
-### Method A: Via Windows Package Manager (WinGet)
-Once published upstream, install the complete context management package directly via the official community repository:
+### From source
 ```powershell
-winget install AlfredoBall.tfcred
-```
-
-### Method B: Manual Go Compilation From Source
-If you are building or testing the tool matrix locally from your source repository root:
-```powershell
-# 1. Compile both the CLI application and core credential helper binaries
 go build -o ./dist/tfcred.exe ./cmd/terraform-credentials-custom/tfcred
 go build -o ./dist/terraform-credentials-custom.exe ./cmd/terraform-credentials-custom
-
-# 2. Register the helper execution configuration hook inside your global Terraform profile
 .\scripts\install.ps1
 ```
-*Note: This automatically configures a secure `credentials_helper "custom" {}` payload vector inside your primary `%APPDATA%\terraform.rc` configuration file.*
 
----
+This installs the helper configuration into your Terraform profile so Terraform can route credentials through the custom helper.
 
-## CLI Usage Reference
+## CLI reference
 
-### Context Initialization
-Prepare your workspace runtime configuration state:
+Run `tfcred` or `tfcred --help` to view the top-level command list.
+
+### Initialize
 ```powershell
-tfcred init
+tfcred init --domain app.terraform.io
 ```
 
-### Profile Registry Management
-Add a brand new tracking schema context boundary:
+If you omit `--domain`, the CLI prompts you to choose one.
+
+### Configure the default domain
 ```powershell
-tfcred add --context control-plane --org networking --token-type team
-```
-Alternatively, pass your active token payload vector directly during creation to set up runtime variables:
-```powershell
-tfcred add --context control-plane --org networking --token-type team --token <your_tfc_token_here>
+tfcred config --default-domain app.terraform.io
 ```
 
-### Active Shell Swapping
-Switch the active shell environment target cleanly:
+To show the current configured default domain:
 ```powershell
-tfcred switch control-plane
+tfcred config --show
 ```
-*(This sets your system process state machine pointer directly to `$env:TF_CONTEXT="team:networking"`)*
 
-### System Diagnostics & Diagnostics State Machine
+### Add a context
+```powershell
+tfcred add --context platform --org acme --token-type team --domain app.terraform.io --token <token>
+```
 
-| Command | Action Scope | Output Details |
-| :--- | :--- | :--- |
-| `tfcred current` | Context Verification | Prints the active `$env:TF_CONTEXT` string value. |
-| `tfcred whoami` | Account Introspection | Outputs active organizational mapping, token types, and context tracking metadata. |
-| `tfcred env` | Configuration Inspection | Dumps variable alignments. Append `--json` for clean programmatic scripting arrays. |
-| `tfcred doctor` | Workspace Sanity Check | Verifies file integrity, path formats, and highlights missing token variable keys. |
-| `tfcred explain` | Engine Execution Trace | Traces resolution logic. Use `--trace` or `--json` to inspect helper execution logic. |
+The `--org` flag is required for non-default contexts. The `--token` flag is optional; if omitted, the tool stores the context metadata and expects the token to be set through the environment or registry workflow you use.
 
----
+### List contexts
+```powershell
+tfcred list
+```
 
-## Complete Usage Workflow Example
+### Switch context
+```powershell
+tfcred switch platform
+```
+
+### Remove or purge contexts
+```powershell
+tfcred remove platform
+tfcred purge platform
+tfcred purge --domain app.terraform.io
+tfcred purge --all
+```
+
+### Inspect the current state
+```powershell
+tfcred current
+tfcred status
+tfcred whoami
+tfcred env --json
+tfcred env --show-secret
+tfcred explain --trace
+tfcred doctor
+```
+
+### Help
+```powershell
+tfcred --help
+tfcred env --help
+```
+
+## Example workflow
 
 ```powershell
-# Initialize empty contexts storage configuration registry
-tfcred init
+# Initialize with the default Terraform domain
+tfcred init --domain app.terraform.io
 
-# Configure specialized scoped automation tracking target entries
-tfcred add --context network-dev --org enterprise-net --token-type team --token secret_tfc_abc123
+# Add a context for a team token
+tfcred add --context network-dev --org networking --token-type team --token <token>
 
-# Activate your newly configured execution context 
+# Activate it for the current shell/session
 tfcred switch network-dev
 
-# Execute native workflow safely — the custom helper resolves the target token transparently
+# Run Terraform
 terraform plan
 ```
 
----
+## Storage and security
 
-## Storage & Security Boundary Mechanics
-
-* **`contexts.json` Structure:** Contexts are logged locally within a configuration file containing strictly structural profile organization pointers and token type definitions. 
-* **Zero Secret Storage:** `contexts.json` **never** records, caches, or writes cryptographic tokens or sensitive credential fields directly to disk. 
-* **Process Lifetime Rule:** Real credential strings reside exclusively within your environment variable block.
-
----
-
-## Troubleshooting & Debugging
-
-If your active Terraform execution throws unexpected authentication errors, run these validation routines to catch missing variables instantly:
-```powershell
-tfcred explain --trace
-tfcred doctor --verbose
-tfcred env --json
-```
-
----
+- `contexts.json` stores the named context metadata only.
+- It does not store the actual token values.
+- The real token is expected to be present in the environment/registry-backed variable used by the credential helper.
 
 ## License
 
-Distributed under the terms of the official **MIT License**. Check the `LICENSE` file for additional policy disclosures.
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
