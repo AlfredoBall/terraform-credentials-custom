@@ -1,10 +1,10 @@
 version: 2
 
-project_name: terraform-credentials-custom
+project_name: terraform-credentials-amiasea
 
 builds:
   - id: tfcred
-    main: ./cmd/terraform-credentials-custom/tfcred
+    main: ./cmd/terraform-credentials-amiasea/tfcred
     binary: tfcred
     ldflags:
       - -s
@@ -15,9 +15,9 @@ builds:
     goarch:
       - amd64
 
-  - id: terraform-credentials-custom
-    main: ./cmd/terraform-credentials-custom
-    binary: terraform-credentials-custom
+  - id: terraform-credentials-amiasea
+    main: ./cmd/terraform-credentials-amiasea
+    binary: terraform-credentials-amiasea
     ldflags:
       - -s
       - -w
@@ -43,5 +43,5 @@ checksum:
 
 release:
   github:
-    owner: AlfredoBall
-    name: terraform-credentials-custom
+    owner: amiasea
+    name: terraform-credentials-amiasea

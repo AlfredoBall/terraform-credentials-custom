@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
+
+	"github.com/zalando/go-keyring"
 )
 
 type Entry struct {
@@ -16,8 +18,9 @@ type Entry struct {
 }
 
 type File struct {
-	Contexts      map[string]Entry `json:"contexts"`
-	DefaultDomain string           `json:"defaultDomain"`
+	Contexts      map[string]Entry  `json:"contexts"`
+	DefaultDomain string            `json:"defaultDomain"`
+	Directories   map[string]string `json:"directories"` // Stores "C:\repos\infra" -> "net-prod"
 }
 
 func getStoragePath() string {
@@ -26,8 +29,40 @@ func getStoragePath() string {
 		return "contexts.json"
 	}
 	targetDir := filepath.Join(appData, "tfcred")
-	_ = os.MkdirAll(targetDir, 0755)
+	_ = os.MkdirAll(targetDir, 0o755)
 	return filepath.Join(targetDir, "contexts.json")
+}
+
+// Binds a directory path to a specific context key persistently
+func BindDirectory(dir string, contextKey string) error {
+	f := load()
+	if f.Directories == nil {
+		f.Directories = make(map[string]string)
+	}
+
+	cleanDir := filepath.Clean(dir)
+	f.Directories[cleanDir] = contextKey
+
+	write(f)
+	return nil
+}
+
+// Climbs up the folder tree to resolve which context owns the current folder
+func ResolveContextByDir(startDir string) (string, bool) {
+	f := load()
+	if f.Directories == nil {
+		return "", false
+	}
+
+	// Clean the path to ensure trailing slashes and casing are standardized
+	current := filepath.Clean(startDir)
+
+	// Exact match look up only—no climbing up to parent folders!
+	if contextKey, exists := f.Directories[current]; exists {
+		return contextKey, true
+	}
+
+	return "", false
 }
 
 func Init(defaultDomain string) {
@@ -35,8 +70,8 @@ func Init(defaultDomain string) {
 	f := File{
 		DefaultDomain: defaultDomain,
 		Contexts:      map[string]Entry{},
+		Directories:   map[string]string{},
 	}
-
 	if _, err := os.Stat(storageFile); err == nil {
 		current := load()
 		if current.DefaultDomain == "" {
@@ -45,12 +80,13 @@ func Init(defaultDomain string) {
 		if current.Contexts == nil {
 			current.Contexts = map[string]Entry{}
 		}
-		delete(current.Contexts, "default")
+		if current.Directories == nil {
+			current.Directories = map[string]string{}
+		}
 		write(current)
 		fmt.Println("[tfcred] already initialized globally at:", storageFile)
 		return
 	}
-
 	write(f)
 }
 
@@ -59,22 +95,22 @@ func Add(ctx, org, tokenType, domain, token string) {
 	if f.Contexts == nil {
 		f.Contexts = map[string]Entry{}
 	}
-	if domain == "" {
-		domain = f.DefaultDomain
-	}
+
 	f.Contexts[ctx] = Entry{
 		Org:       org,
 		TokenType: tokenType,
 		Domain:    domain,
 	}
 
+	// Securely store token in Windows Credential Manager under a isolated target label
 	if token != "" {
-		envName := TokenEnvName(domain, tokenType, org)
-		registryCmd := fmt.Sprintf("[Environment]::SetEnvironmentVariable('%s', '%s', 'User')", envName, token)
-		cmd := exec.Command("powershell", "-Command", registryCmd)
-		_ = cmd.Run()
-
-		fmt.Println("[tfcred] Successfully registered persistent variable target:", envName)
+		secretTargetKey := fmt.Sprintf("tfcred:context:%s", ctx)
+		err := keyring.Set("tfcred", secretTargetKey, token)
+		if err != nil {
+			fmt.Printf("[tfcred][error] Failed to store token securely in Windows Credential Manager: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("[tfcred] Token securely vaulted in Windows Credential Manager.")
 	}
 	write(f)
 }
@@ -85,21 +121,23 @@ func Remove(ctx string) (Entry, bool) {
 	if !exists {
 		return Entry{}, false
 	}
-
 	delete(f.Contexts, ctx)
-	write(f)
 
-	return entry, true
-}
-
-func FindByTypeOrg(tokenType, org string) (string, Entry, bool) {
-	f := load()
-	for name, entry := range f.Contexts {
-		if entry.TokenType == tokenType && entry.Org == org {
-			return name, entry, true
+	// Clean up any stale directory maps pointing to this deleted context profile
+	if f.Directories != nil {
+		for dir, boundKey := range f.Directories {
+			if boundKey == ctx {
+				delete(f.Directories, dir)
+			}
 		}
 	}
-	return "", Entry{}, false
+
+	// Purge the accompanying token from Windows Credential Manager
+	secretTargetKey := fmt.Sprintf("tfcred:context:%s", ctx)
+	_ = keyring.Delete("tfcred", secretTargetKey)
+
+	write(f)
+	return entry, true
 }
 
 func SetDefaultDomain(domain string) {
@@ -107,10 +145,6 @@ func SetDefaultDomain(domain string) {
 	f.DefaultDomain = domain
 	if f.Contexts == nil {
 		f.Contexts = map[string]Entry{}
-	}
-	if entry, ok := f.Contexts["default"]; ok {
-		entry.Domain = domain
-		f.Contexts["default"] = entry
 	}
 	write(f)
 }
@@ -121,23 +155,27 @@ func PurgeDomain(domain string) []string {
 	if f.Contexts == nil {
 		f.Contexts = map[string]Entry{}
 	}
-
 	for name, entry := range f.Contexts {
-		if name == "default" {
-			continue
-		}
 		if entry.Domain == domain {
-			removed = append(removed, EntryEnvNames(entry)...)
+			secretTargetKey := fmt.Sprintf("tfcred:context:%s", name)
+			_ = keyring.Delete("tfcred", secretTargetKey)
+
+			removed = append(removed, name)
 			delete(f.Contexts, name)
 		}
 	}
 
-	if f.DefaultDomain == domain {
-		removed = append(removed, TokenEnvDefault(domain))
+	// Clear directory bindings pointing to purged contexts
+	if f.Directories != nil {
+		for dir, boundKey := range f.Directories {
+			if _, exists := f.Contexts[boundKey]; !exists {
+				delete(f.Directories, dir)
+			}
+		}
 	}
 
 	write(f)
-	return uniqueStrings(removed)
+	return removed
 }
 
 func PurgeAll() []string {
@@ -146,21 +184,17 @@ func PurgeAll() []string {
 	if f.Contexts == nil {
 		f.Contexts = map[string]Entry{}
 	}
+	for name := range f.Contexts {
+		secretTargetKey := fmt.Sprintf("tfcred:context:%s", name)
+		_ = keyring.Delete("tfcred", secretTargetKey)
 
-	for name, entry := range f.Contexts {
-		if name == "default" {
-			continue
-		}
-		removed = append(removed, EntryEnvNames(entry)...)
+		removed = append(removed, name)
 		delete(f.Contexts, name)
 	}
 
-	if f.DefaultDomain != "" {
-		removed = append(removed, TokenEnvDefault(f.DefaultDomain))
-	}
-
+	f.Directories = map[string]string{}
 	write(f)
-	return uniqueStrings(removed)
+	return removed
 }
 
 func Load() File {
@@ -169,22 +203,21 @@ func Load() File {
 
 func List() File {
 	f := load()
-	if f.Contexts == nil || len(f.Contexts) == 0 {
+	if len(f.Contexts) == 0 {
 		fmt.Println("[tfcred] no contexts configured")
 		return f
 	}
 
 	fmt.Println("[tfcred] configured contexts:")
+	// Use tabwriter to create a beautifully aligned terminal table
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "  CONTEXT\tTYPE\tORGANIZATION\tDOMAIN")
+	fmt.Fprintln(w, "  -------\t----\t------------\t------")
+
 	for name, entry := range f.Contexts {
-		if name == "default" {
-			continue
-		}
-		if entry.TokenType == "default" {
-			fmt.Printf("  - %s (default, domain=%s)\n", name, entry.Domain)
-			continue
-		}
-		fmt.Printf("  - %s (type=%s org=%s domain=%s)\n", name, entry.TokenType, entry.Org, entry.Domain)
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", name, entry.TokenType, entry.Org, entry.Domain)
 	}
+	w.Flush()
 	return f
 }
 
@@ -192,46 +225,20 @@ func load() File {
 	storageFile := getStoragePath()
 	b, err := os.ReadFile(storageFile)
 	if err != nil {
-		return File{Contexts: map[string]Entry{}}
+		return File{Contexts: map[string]Entry{}, Directories: map[string]string{}}
 	}
 	var f File
 	_ = json.Unmarshal(b, &f)
+	if f.Directories == nil {
+		f.Directories = map[string]string{}
+	}
 	return f
 }
 
 func write(f File) {
 	storageFile := getStoragePath()
 	b, _ := json.MarshalIndent(f, "", " ")
-	_ = os.WriteFile(storageFile, b, 0644)
-}
-
-func DeleteEnvVar(name string) error {
-	registryCmd := fmt.Sprintf("[Environment]::SetEnvironmentVariable('%s', $null, 'User')", name)
-	cmd := exec.Command("powershell", "-Command", registryCmd)
-	return cmd.Run()
-}
-
-func TokenEnvBase(domain string) string {
-	return fmt.Sprintf("TF_TOKEN_%s", sanitizeDomain(domain))
-}
-
-func TokenEnvDefault(domain string) string {
-	return TokenEnvBase(domain)
-}
-
-func TokenEnvName(domain, tokenType, org string) string {
-	base := TokenEnvBase(domain)
-	if tokenType == "" || tokenType == "default" {
-		return base
-	}
-	return fmt.Sprintf("%s_%s_%s", base, sanitizeTokenComponent(tokenType), sanitizeTokenComponent(org))
-}
-
-func EntryEnvNames(entry Entry) []string {
-	if entry.TokenType == "default" {
-		return []string{TokenEnvDefault(entry.Domain)}
-	}
-	return []string{TokenEnvName(entry.Domain, entry.TokenType, entry.Org)}
+	_ = os.WriteFile(storageFile, b, 0o644)
 }
 
 func sanitizeDomain(domain string) string {
@@ -241,21 +248,125 @@ func sanitizeDomain(domain string) string {
 	return domain
 }
 
+// GetToken securely fetches the credential token from the Windows vault for a given context
+func GetToken(ctx string) (string, error) {
+	secretTargetKey := fmt.Sprintf("tfcred:context:%s", ctx)
+	token, err := keyring.Get("tfcred", secretTargetKey)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// TokenVaultBase converts a domain name into a standardized secure vault namespace base string.
+func TokenVaultBase(domain string) string {
+	return fmt.Sprintf("tfcred:domain:%s", sanitizeDomain(domain))
+}
+
+// TokenVaultKey builds the unique, isolated storage tracking key identifier used by the Windows Vault.
+func TokenVaultKey(domain, tokenType, org string) string {
+	base := TokenVaultBase(domain)
+	if tokenType == "" {
+		return base
+	}
+	return fmt.Sprintf("%s:%s:%s", base, sanitizeTokenComponent(tokenType), sanitizeTokenComponent(org))
+}
+
+// EntryVaultKeys converts an explicit context entry into its formatted secure storage lookup tracking keys.
+func EntryVaultKeys(entry Entry) []string {
+	return []string{TokenVaultKey(entry.Domain, entry.TokenType, entry.Org)}
+}
+
+// sanitizeTokenComponent cleans formatting parameters (spaces, casing, dashes) for logging alignment
 func sanitizeTokenComponent(input string) string {
 	component := strings.TrimSpace(strings.ToLower(input))
 	component = strings.ReplaceAll(component, "-", "_")
 	return component
 }
 
-func uniqueStrings(items []string) []string {
-	seen := map[string]struct{}{}
-	list := []string{}
-	for _, item := range items {
-		if _, ok := seen[item]; ok {
+// CleanOrphanedDirectories scans the mapping table, checks the host filesystem,
+// removes non-existent folders or dead context keys, and returns what it cleared.
+func CleanOrphanedDirectories() ([]string, []string) {
+	f := load()
+	// Idiomatic Go: len() on a nil map evaluates to 0 safely, omitting the nil check
+	if len(f.Directories) == 0 {
+		return nil, nil
+	}
+
+	deadPaths := []string{}
+	deadContexts := []string{}
+
+	// Track keys to delete after loop completion to prevent concurrent map mutation crashes
+	var pathsToDelete []string
+
+	if f.Contexts == nil {
+		f.Contexts = map[string]Entry{}
+	}
+
+	for dir, contextKey := range f.Directories {
+		// Check 1: Does the folder still physically exist on the hard drive?
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			deadPaths = append(deadPaths, dir)
+			pathsToDelete = append(pathsToDelete, dir)
 			continue
 		}
-		seen[item] = struct{}{}
-		list = append(list, item)
+
+		// Check 2: Does the context profile it points to still exist in our configuration?
+		if _, exists := f.Contexts[contextKey]; !exists {
+			deadContexts = append(deadContexts, fmt.Sprintf("%s -> [%s]", dir, contextKey))
+			pathsToDelete = append(pathsToDelete, dir)
+		}
 	}
-	return list
+
+	// Safely purge identified stale elements out of the active loop scope
+	if len(pathsToDelete) > 0 {
+		for _, dir := range pathsToDelete {
+			delete(f.Directories, dir)
+		}
+		write(f)
+	}
+
+	return deadPaths, deadContexts
+}
+
+// CheckOrphanedDirectories runs a non-destructive filesystem scan over all
+// registered bindings and returns any stale or unmapped directory paths.
+func CheckOrphanedDirectories() ([]string, []string) {
+	f := load()
+	// Idiomatic Go: len() on a nil map evaluates to 0 safely, omitting the nil check
+	if len(f.Directories) == 0 {
+		return nil, nil
+	}
+
+	missingPaths := []string{}
+	missingContexts := []string{}
+
+	if f.Contexts == nil {
+		f.Contexts = map[string]Entry{}
+	}
+
+	for dir, contextKey := range f.Directories {
+		// 1. Check if the directory path still exists on the machine
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			missingPaths = append(missingPaths, dir)
+			continue
+		}
+
+		// 2. Check if the target profile key has been deleted from contexts
+		if _, exists := f.Contexts[contextKey]; !exists {
+			missingContexts = append(missingContexts, fmt.Sprintf("%s -> [%s]", dir, contextKey))
+		}
+	}
+
+	return missingPaths, missingContexts
+}
+
+// NukeStorage completely overwrites contexts.json with empty default maps
+func NukeStorage() {
+	emptyFile := File{
+		Contexts:      map[string]Entry{},
+		Directories:   map[string]string{},
+		DefaultDomain: "app.terraform.io",
+	}
+	write(emptyFile)
 }

@@ -1,7 +1,9 @@
 # tfcred — Terraform credential context manager
 tfcred is a lightweight Terraform credential helper that makes it easy to switch between multiple Terraform Cloud / Terraform Enterprise tokens using named contexts.
 
-Instead of relying on a single global token, you can maintain several organization or team-scoped tokens and activate them on demand via the TF_CONTEXT environment variable.
+See: https://developer.hashicorp.com/terraform/internals/credentials-helpers
+
+Instead of relying on a single global token, you can maintain several organization or team-scoped tokens and activate them on demand via the tfcred switch <context> command.
 
 ## Features
 Context-based credential switching
@@ -23,7 +25,7 @@ Works with both Terraform Cloud and Terraform Enterprise
 Install `tfcred` using WinGet:
 
 ```powershell
-winget install AlfredoBall.tfcred
+winget install amiasea.tfcred
 ```
 
 After installation, initialize the Terraform credentials helper:
@@ -39,8 +41,8 @@ The init command registers the custom credential helper in your Terraform CLI co
 Build the binaries:
 
 ```powershell
-go build -o ./dist/tfcred.exe ./cmd/terraform-credentials-custom/tfcred
-go build -o ./dist/terraform-credentials-custom.exe ./cmd/terraform-credentials-custom
+go build -o ./dist/tfcred.exe ./cmd/terraform-credentials-amiasea/tfcred
+go build -o ./dist/terraform-credentials-amiasea.exe ./cmd/terraform-credentials-amiasea
 ```
 
 Run the installation script:
@@ -60,10 +62,10 @@ Run tfcred or tfcred --help to see all commands.
 | `version` | Show tfcred version |
 | `init [--domain <domain>]` | Initialize storage and set default domain |
 | `config --default-domain <d>` | Set the default Terraform domain |
-| `config --show` | Show current configuration |
-| `add --context <name> --org <org> [--token-type <type>] [--domain <domain>] [--token <token>]` | Add or update a context |
+| `config` | Show current configuration |
+| `add --context <name> --org <org> [--token-type <type>] [--domain <domain>] --token <token> --switch` | Add or update a context |
 | `list` | List all configured contexts |
-| `switch <context>` | Switch active context (sets `TF_CONTEXT`) |
+| `switch <context>` | Switch active context |
 | `remove <context>` | Remove context metadata |
 | `purge <context>` | Remove context and delete its token(s) |
 | `purge --domain <domain>` | Purge all contexts for a specific domain |
@@ -73,18 +75,20 @@ Run tfcred or tfcred --help to see all commands.
 
 | Command | Description |
 |---------|-------------|
-| `current` | Print current `TF_CONTEXT` value |
+| `current` | Print current context value |
 | `status` | Show current context resolution status |
 | `whoami` | Show detailed information about current context |
 | `env [--json] [--show-secret] [--all]` | Display token environment variables |
 | `explain [--json] [--trace]` | Explain how the current context is resolved |
 | `doctor` | Run full system diagnostics |
+| `orphaned` | Managed directory contexts not in sync with the file system |
+| `clean-dirs` | Removes orphaned directories and associated context entries |
 
 ## Supported Values
 
-Token types: user (default), team, org
+Token types: user, team, org
 
-Domains: app.terraform.io, app.eu.terraform.io
+Domains: app.terraform.io, app.eu.terraform.io, custom
 
 ## Example Workflow
 

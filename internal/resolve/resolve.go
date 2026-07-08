@@ -2,25 +2,24 @@ package resolve
 
 import (
 	"fmt"
-	"os"
 
-	"github.com/AlfredoBall/terraform-credentials-custom/internal/store"
-	"github.com/AlfredoBall/terraform-credentials-custom/internal/tfcontext"
+	"github.com/amiasea/terraform-credentials-amiasea/internal/store"
+	"github.com/amiasea/terraform-credentials-amiasea/internal/tfcontext"
 )
 
 func Resolve(ctx tfcontext.Context, domain string) (string, error) {
-	if domain == "" {
-		return "", fmt.Errorf("domain is not configured")
+	if ctx.Key == "" {
+		return "", fmt.Errorf("cannot resolve credential: target context key is empty")
 	}
 
-	if ctx.Type == "default" {
-		return "", fmt.Errorf("default context does not use a fallback token; configure an explicit context token first")
+	token, err := store.GetToken(ctx.Key)
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve token for context '%s': %w", ctx.Key, err)
 	}
 
-	env := store.TokenEnvName(domain, ctx.Type, ctx.Org)
-	token := os.Getenv(env)
 	if token == "" {
-		return "", fmt.Errorf("missing environment token mapping vector variable: %s", env)
+		return "", fmt.Errorf("retrieved token for context '%s' is empty", ctx.Key)
 	}
+
 	return token, nil
 }

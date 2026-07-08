@@ -1,0 +1,21 @@
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - question
+      - invalid
+    users:
+      - dependabot
+  categories:
+    - title: "🚀 New Features"
+      labels:
+        - enhancement
+        - feature
+    - title: "🐛 Bug Fixes"
+      labels:
+        - bug
+        - fix
+    - title: "🧰 Maintenance & Internal"
+      labels:
+        - chore
+        - documentation

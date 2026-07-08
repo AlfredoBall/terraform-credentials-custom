@@ -5,12 +5,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Configuration metadata mapping your system layout topology
-$owner = "AlfredoBall"
-$repo = "terraform-credentials-custom"
-$packageId = "AlfredoBall.tfcred"
+$owner = "amiasea"
+$repo = "terraform-credentials-amiasea"
+$packageId = "amiasea.tfcred"
 
 # Target GoReleaser zip archive layout structure location path
-$archiveName = "terraform-credentials-custom_Windows_amd64.zip"
+$archiveName = "terraform-credentials-amiasea_Windows_amd64.zip"
 $distPath = ".\dist\$archiveName"
 
 if (-not (Test-Path $distPath)) {
@@ -44,8 +44,8 @@ NestedInstallerType: portable
 NestedInstallerFiles:
   - RelativeFilePath: tfcred.exe
     PortableCommandAlias: tfcred
-  - RelativeFilePath: terraform-credentials-custom.exe
-    PortableCommandAlias: terraform-credentials-custom
+  - RelativeFilePath: terraform-credentials-amiasea.exe
+    PortableCommandAlias: terraform-credentials-amiasea
 Installers:
   - Architecture: x64
     InstallerUrl: $($url)

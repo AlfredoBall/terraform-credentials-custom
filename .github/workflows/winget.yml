@@ -12,7 +12,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  actions: write
 
 jobs:
   create_pr:
@@ -25,9 +24,11 @@ jobs:
       - name: Resolve release assets
         id: assets
         uses: actions/github-script@v7
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         with:
           script: |
-            const tag = "${{ inputs.tag }}";
+            const tag = process.env.INPUT_TAG;
             const release = await github.rest.repos.getReleaseByTag({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -63,36 +64,40 @@ jobs:
       # -------------------------------------------------------
       - name: Submit manifests directly via GitHub API
         uses: actions/github-script@v7
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INSTALLER_URL: ${{ steps.assets.outputs.installer_url }}
+          INSTALLER_SHA: ${{ steps.crypto.outputs.sha }}
         with:
           github-token: ${{ secrets.WINGET_PAT }}
           script: |
             const fs = require('fs');
-            const version = "${{ inputs.version }}";
-            const url = "${{ steps.assets.outputs.installer_url }}";
-            const sha = "${{ steps.crypto.outputs.sha }}";
+            const version = process.env.INPUT_VERSION;
+            const url = process.env.INSTALLER_URL;
+            const sha = process.env.INSTALLER_SHA;
             const branchName = `winget-update-tfcred-${version}`;
             
             // Define manifest contents matching strict WinGet rules
-            const file1Content = `PackageIdentifier: AlfredoBall.tfcred\nPackageVersion: ${version}\nManifestType: version\nManifestVersion: 1.6.0`;
+            const file1Content = `PackageIdentifier: amiasea.tfcred\nPackageVersion: ${version}\nManifestType: version\nManifestVersion: 1.6.0`;
             
-            const file2Content = `PackageIdentifier: AlfredoBall.tfcred\nPackageVersion: ${version}\nInstallerLocale: en-US\nArchitecture: x64\nInstallerType: zip\nNestedInstallerType: portable\nNestedInstallerFiles:\n  - RelativeFilePath: tfcred.exe\n    PortableCommandAlias: tfcred\n  - RelativeFilePath: terraform-credentials-custom.exe\n    PortableCommandAlias: terraform-credentials-custom\nInstallers:\n  - Architecture: x64\n    InstallerUrl: ${url}\n    InstallerSha256: ${sha}\nManifestType: installer\nManifestVersion: 1.6.0`;
+            const file2Content = `PackageIdentifier: amiasea.tfcred\nPackageVersion: ${version}\nInstallerLocale: en-US\nArchitecture: x64\nInstallerType: zip\nNestedInstallerType: portable\nNestedInstallerFiles:\n  - RelativeFilePath: tfcred.exe\n    PortableCommandAlias: tfcred\n  - RelativeFilePath: terraform-credentials-amiasea.exe\n    PortableCommandAlias: terraform-credentials-amiasea\nInstallers:\n  - Architecture: x64\n    InstallerUrl: ${url}\n    InstallerSha256: ${sha}\nManifestType: installer\nManifestVersion: 1.6.0`;
             
-            const file3Content = `PackageIdentifier: AlfredoBall.tfcred\nPackageVersion: ${version}\nPackageLocale: en-US\nPublisher: AlfredoBall\nPackageName: tfcred\nLicense: MIT\nShortDescription: Terraform credential context manager\nManifestType: defaultLocale\nManifestVersion: 1.6.0`;
+            const file3Content = `PackageIdentifier: amiasea.tfcred\nPackageVersion: ${version}\nPackageLocale: en-US\nPublisher: amiasea\nPackageName: tfcred\nLicense: MIT\nShortDescription: Terraform credential context manager\nManifestType: defaultLocale\nManifestVersion: 1.6.0`;
 
-            const manifestPath = `manifests/a/AlfredoBall/tfcred/${version}`;
+            const manifestPath = `manifests/a/amiasea/tfcred/${version}`;
             
-            console.log(`[winget] Creating branch ${branchName} inside AlfredoBall/winget-pkgs...`);
+            console.log(`[winget] Creating branch ${branchName} inside amiasea/winget-pkgs...`);
             
             // 1. Get the latest SHA from master branch of your fork
             const masterRef = await github.rest.git.getRef({
-              owner: 'AlfredoBall',
+              owner: 'amiasea',
               repo: 'winget-pkgs',
               ref: 'heads/master'
             });
             
             // 2. Create your new tracking feature branch
             await github.rest.git.createRef({
-              owner: 'AlfredoBall',
+              owner: 'amiasea',
               repo: 'winget-pkgs',
               ref: `refs/heads/${branchName}`,
               sha: masterRef.data.object.sha
@@ -101,7 +106,7 @@ jobs:
             // Helper function to create individual file commits inside your branch via API
             async function commitFile(path, content, message) {
               await github.rest.repos.createOrUpdateFileContents({
-                owner: 'AlfredoBall',
+                owner: 'amiasea',
                 repo: 'winget-pkgs',
                 path: path,
                 message: message,
@@ -111,17 +116,17 @@ jobs:
             }
 
             console.log(`[winget] Writing manifest files to branch...`);
-            await commitFile(`${manifestPath}/AlfredoBall.tfcred.yaml`, file1Content, `feat: add version manifest for ${version}`);
-            await commitFile(`${manifestPath}/AlfredoBall.tfcred.installer.yaml`, file2Content, `feat: add installer manifest for ${version}`);
-            await commitFile(`${manifestPath}/AlfredoBall.tfcred.locale.en-US.yaml`, file3Content, `feat: add locale manifest for ${version}`);
+            await commitFile(`${manifestPath}/amiasea.tfcred.yaml`, file1Content, `feat: add version manifest for ${version}`);
+            await commitFile(`${manifestPath}/amiasea.tfcred.installer.yaml`, file2Content, `feat: add installer manifest for ${version}`);
+            await commitFile(`${manifestPath}/amiasea.tfcred.locale.en-US.yaml`, file3Content, `feat: add locale manifest for ${version}`);
 
             console.log(`[winget] Opening Pull Request against microsoft/winget-pkgs...`);
             const pr = await github.rest.pulls.create({
               owner: 'microsoft',
               repo: 'winget-pkgs',
-              title: `New version: AlfredoBall.tfcred version ${version}`,
-              body: `Automated WinGet submission update for AlfredoBall.tfcred version ${version}.`,
-              head: `AlfredoBall:${branchName}`,
+              title: `New version: amiasea.tfcred version ${version}`,
+              body: `Automated WinGet submission update for amiasea.tfcred version ${version}.`,
+              head: `amiasea:${branchName}`,
               base: 'master'
             });
 
@@ -132,6 +137,8 @@ jobs:
       # 4. Step Summary Output Dashboard
       # -------------------------------------------------------
       - name: Summary
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           echo "## Winget PR Created Successfully" >> $GITHUB_STEP_SUMMARY
-          echo "- Version Sent: v${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Version Sent: v$INPUT_VERSION" >> $GITHUB_STEP_SUMMARY

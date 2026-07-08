@@ -7,11 +7,29 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
 
 jobs:
+  # --- Lint Codebase Against .golangci.yml ---
+  lint:
+    name: lint code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26
+          cache: false # golangci-lint-action manages its own optimized caching internally
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
   test:
     name: unit tests
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,7 +46,13 @@ jobs:
   build_release:
     name: build + goreleaser
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, lint]
+
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
@@ -68,7 +92,6 @@ jobs:
 
       - name: E2E helper wiring validation
         env:
-          TF_TEST_TOKEN: ${{ vars.TF_TEST_TOKEN }}
           TF_CLI_CONFIG_FILE: /tmp/tfcred-test/terraform.tfrc
         run: |
           set -euo pipefail
@@ -79,21 +102,16 @@ jobs:
           export HOME="/tmp/tfcred-test/home"
           export APPDATA="/tmp/tfcred-test/home"
 
-          go build -ldflags "-X main.version=${{ steps.meta.outputs.version }}" -o /tmp/tfcred-test/bin/tfcred ./cmd/terraform-credentials-custom/tfcred
-          go build -ldflags "-X main.version=${{ steps.meta.outputs.version }}" -o /tmp/tfcred-test/bin/terraform-credentials-custom ./cmd/terraform-credentials-custom
-          chmod +x /tmp/tfcred-test/bin/tfcred /tmp/tfcred-test/bin/terraform-credentials-custom
+          go build -ldflags "-X main.version=${{ steps.meta.outputs.version }}" -o /tmp/tfcred-test/bin/tfcred ./cmd/terraform-credentials-amiasea/tfcred
+          go build -ldflags "-X main.version=${{ steps.meta.outputs.version }}" -o /tmp/tfcred-test/bin/terraform-credentials-amiasea ./cmd/terraform-credentials-amiasea
+          chmod +x /tmp/tfcred-test/bin/tfcred /tmp/tfcred-test/bin/terraform-credentials-amiasea
 
           tfcred --help >/dev/null
           tfcred version
           tfcred init --domain app.terraform.io
 
-          if [ -n "${TF_TEST_TOKEN:-}" ]; then
-            echo "[e2e] injecting test team token metadata into tfcred"
-            tfcred add --context ci-team-test --org ci-test-org --token-type team --domain app.terraform.io --token "$TF_TEST_TOKEN"
-          else
-            echo "[e2e] TF_TEST_TOKEN not configured; validating metadata-only registration path"
-            tfcred add --context ci-team-test --org ci-test-org --token-type team --domain app.terraform.io
-          fi
+          echo "[e2e] injecting test team token metadata into tfcred"
+          tfcred add --context ci-team-test --org ci-test-org --token-type team --domain app.terraform.io --token XXXXXXXXXXXXXX.atlasv1.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
           pwsh -File ./scripts/install.ps1
 

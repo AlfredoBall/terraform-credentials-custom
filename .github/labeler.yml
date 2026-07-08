@@ -1,0 +1,10 @@
+# .github/labeler.yml
+ghes-security:
+  - changed-files:
+      - any-glob-to-any-file: 'internal/security/**/*'
+tf-provider-update:
+  - changed-files:
+      - any-glob-to-any-file: 'terraform/**/*'
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: 'docs/**/*.md'

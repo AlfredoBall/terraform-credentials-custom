@@ -6,32 +6,18 @@ import (
 )
 
 type Context struct {
-	Raw  string
-	Type string
-	Org  string
+	Key string
 }
 
-func Parse(raw string) (Context, error) {
-
-	raw = strings.TrimSpace(raw)
-
-	if raw == "" || raw == "default" {
-		return Context{
-			Raw:  "default",
-			Type: "default",
-			Org:  "",
-		}, nil
+// Parse standardizes and validates a given context key string.
+func Parse(key string) (Context, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return Context{}, errors.New("context key cannot be empty or blank")
 	}
 
-	parts := strings.Split(raw, ":")
-
-	if len(parts) != 2 {
-		return Context{}, errors.New("invalid TF_CONTEXT format (expected type:org or default)")
-	}
-
+	// The string is the direct map key. No more splitting or complex string sanitizations.
 	return Context{
-		Raw:  raw,
-		Type: parts[0],
-		Org:  parts[1],
+		Key: key,
 	}, nil
 }
